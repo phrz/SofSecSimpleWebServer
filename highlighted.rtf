@@ -1,0 +1,302 @@
+{\rtf1\ansi\ansicpg1252\cocoartf1561\cocoasubrtf200
+{\fonttbl\f0\fnil\fcharset0 Monaco;}
+{\colortbl;\red255\green255\blue255;\red131\green129\blue131;\red176\green126\blue0;\red191\green3\blue3;
+\red1\green1\blue129;\red0\green87\blue174;\red255\green0\blue255;}
+{\*\expandedcolortbl;;\csgenericrgb\c51373\c50588\c51373;\csgenericrgb\c69020\c49412\c0;\csgenericrgb\c74902\c1176\c1176;
+\csgenericrgb\c392\c392\c50588;\csgenericrgb\c0\c34118\c68235;\csgenericrgb\c100000\c0\c100000;}
+\margl1134\margr1134\margb1134\margt1134\vieww11680\viewh16840\viewkind0
+\deftab720
+\pard\pardeftab720\partightenfactor0
+
+\f0\fs20 \cf2 // SimpleWebServer.java\cf0 \
+\cf2 //\cf0 \
+\cf2 // This toy web server is used to illustrate security vulnerabilities.\cf0 \
+\cf2 // This web server only supports extremely simple HTTP GET requests.\cf0 \
+\cf2 //\cf0 \
+\cf2 // This file is also available at http://www.learnsecurity.com/ntk\cf0 \
+\
+import java.io.*;\
+import java.net.*;\
+import java.util.*;\
+import java.time.Instant;\
+import java.time.ZoneOffset;\
+import java.time.format.DateTimeFormatter;\
+import java.util.Base64.*;\
+\
+public class SimpleWebServer \{\
+\
+	\cf2 // Run the HTTP server on this TCP port. \cf0 \
+	private static final int PORT = \cf3 8080\cf0 ;\
+\
+	\cf2 // in bytes (5 MB)\cf0 \
+	private static final int MAX_FILE_SIZE = \cf3 5\cf0 _000_000;\
+\
+	\cf2 // hardcoded credentials for Basic authentication\cf0 \
+	\cf2 // (as per instructions)\cf0 \
+	private static final String USERNAME = \cf4 "admin"\cf0 ;\
+	private static final String PASSWORD = \cf4 "letmein"\cf0 ;\
+\
+	\cf2 // The socket used to process incoming connections\cf0 \
+	\cf2 // from web clients \cf0 \
+	private static ServerSocket serverSocket;\
+\
+	public \cf5 SimpleWebServer\cf0 () throws Exception \{\
+		System.out.\cf5 println\cf0 (\cf4 "Listening on :"\cf0  + PORT);\
+		serverSocket = new \cf5 ServerSocket\cf0 (PORT);\
+	\}\
+\
+	public void \cf5 run\cf0 () throws Exception \{\
+		while(\cf6 true\cf0 ) \{\
+			\cf2 // wait for a connection from a client \cf0 \
+			Socket socket = serverSocket.\cf5 accept\cf0 ();\
+\
+			\cf2 // then process the client's request \cf0 \
+			\cf5 processRequest\cf0 (socket);\
+		\}\
+	\}\
+\
+	\cf2 // Reads the HTTP request from the client, and\cf0 \
+	\cf2 // responds with the file the user requested or\cf0 \
+	\cf2 // a HTTP error code. \cf0 \
+	public void \cf5 processRequest\cf0 (Socket socket) throws Exception \{\
+		\cf2 // used to read data from the client \cf0 \
+		BufferedReader inputReader =\
+			new \cf5 BufferedReader\cf0 (\
+				new \cf5 InputStreamReader\cf0 (socket.\cf5 getInputStream\cf0 ())\
+			);\
+\
+		\cf2 // used to write data to the client \cf0 \
+		OutputStreamWriter clientConnection = \
+			new \cf5 OutputStreamWriter\cf0 (socket.\cf5 getOutputStream\cf0 ());\
+\
+		\cf2 // read the HTTP request from the client \cf0 \
+		String request = inputReader.\cf5 readLine\cf0 ();\
+\
+		\cf2 // parse the HTTP request \cf0 \
+		var requestTokenizer = new \cf5 StringTokenizer\cf0 (request, \cf4 " "\cf0 );\
+\
+		String command = requestTokenizer.\cf5 nextToken\cf0 ();\
+		String pathName = requestTokenizer.\cf5 nextToken\cf0 ();\
+\
+		\cf2 // parse headers\cf0 \
+		String line = \cf6 null\cf0 ;\
+		var headers = new HashMap<String, String>();\
+\
+		while((line = inputReader.\cf5 readLine\cf0 ()) != \cf6 null\cf0 ) \{\
+			if(line.\cf5 isEmpty\cf0 ()) \{\
+				\cf2 // blank line signifies end of headers (or no headers)\cf0 \
+				break;\
+			\}\
+			\cf2 // "Header-Name: Header Field"\cf0 \
+			int colonLocation = line.\cf5 indexOf\cf0 (\cf4 ':'\cf0 );\
+			if(colonLocation == -\cf3 1\cf0 ) \{\
+				\cf5 logError\cf0 (\
+					\cf4 "Malformed header\cf0  \cf7 \\"\cf4 "\cf0 +line+\cf4 "\cf7 \\"\cf0  \cf4 in request for\cf0  \cf7 \\"\cf4 "\cf0 +pathName+\cf4 "\cf7 \\"\cf4 "\cf0 +\
+					\cf4 " (expected a colon delimiting header key and value."\cf0 \
+				);\
+				\cf5 statusCode\cf0 (clientConnection, \cf3 400\cf0 ); \cf2 // Bad Request\cf0 \
+				\cf5 endHeaders\cf0 (clientConnection);\
+				return;\
+			\}\
+\
+			String headerName = line.\cf5 substring\cf0 (\cf3 0\cf0 , colonLocation);\
+\
+			\cf2 // header field may have leading whitespace\cf0 \
+			\cf2 // we simplify handling with String.trim() but a better implementation\cf0 \
+			\cf2 // would only strip it from the left.\cf0 \
+			String headerField = line.\cf5 substring\cf0 (colonLocation + \cf3 1\cf0 , line.\cf5 length\cf0 ()).\cf5 trim\cf0 ();\
+\
+			headers.\cf5 put\cf0 (headerName, headerField);\
+		\}\
+\
+		\cf2 // print request details to screen for debugging\cf0 \
+		System.out.\cf5 println\cf0 (request);\
+\
+		if(!command.\cf5 equals\cf0 (\cf4 "GET"\cf0 )) \{\
+			\cf5 statusCode\cf0 (clientConnection, \cf3 501\cf0 ); \cf2 // Not Implemented\cf0 \
+			\cf5 endHeaders\cf0 (clientConnection);\
+		\} else if(!\cf5 checkBasicAuthentication\cf0 (headers)) \{\
+			\cf2 // Basic authentication on all pages\cf0 \
+			\cf5 statusCode\cf0 (clientConnection, \cf3 401\cf0 ); \cf2 // Unauthorized\cf0 \
+			\cf2 // "The server generating a 401 response MUST send a \cf0 \
+			\cf2 // WWW-Authenticate header field containing at least \cf0 \
+			\cf2 // one challenge applicable to the target resource."\cf0 \
+			\cf5 writeHeader\cf0 (clientConnection, \cf4 "WWW-Authenticate"\cf0 , \cf4 "Basic realm=\cf7 \\"\cf4 DefaultRealm\cf7 \\"\cf4 "\cf0 );\
+			\cf5 endHeaders\cf0 (clientConnection);\
+		\} else \{\
+			\cf2 // command is GET, and is authorized.\cf0 \
+			\cf5 serveFile\cf0 (clientConnection, pathName);\
+		\}\
+\
+		\cf2 // close the connection to the client \cf0 \
+		clientConnection.\cf5 close\cf0 ();\
+	\}\
+\
+	public Boolean \cf5 checkBasicAuthentication\cf0 (Map<String,String> headers) \{\
+		String authorizationField = headers.\cf5 get\cf0 (\cf4 "Authorization"\cf0 );\
+		if(authorizationField == \cf6 null\cf0 ) \{\
+			return \cf6 false\cf0 ;\
+		\}\
+\
+		String[] parts = authorizationField.\cf5 split\cf0 (\cf4 " "\cf0 );\
+		if(parts.length != \cf3 2\cf0 ) \{\
+			\cf2 // format must be exactly "Basic" + " " + <basic-cookie>\cf0 \
+			return \cf6 false\cf0 ;\
+		\}\
+\
+		if(!parts[\cf3 0\cf0 ].\cf5 equals\cf0 (\cf4 "Basic"\cf0 )) \{\
+			return \cf6 false\cf0 ;\
+		\}\
+\
+		\cf2 // try to decode the Base64 "basic-cookie" part\cf0 \
+		byte[] authenticationCookieBytes = \cf6 null\cf0 ;\
+		try \{\
+			authenticationCookieBytes = Base64.\cf5 getDecoder\cf0 ().\cf5 decode\cf0 (parts[\cf3 1\cf0 ]);\
+		\} catch(IllegalArgumentException e) \{\
+			\cf5 logError\cf0 (\cf4 "Invalid base64 in Authorization: Basic header."\cf0 );\
+			\cf2 // we should return Bad Request here but because we're just printing\cf0 \
+			\cf2 // ad hoc to the client we can't do that. It would be better to use a mutable\cf0 \
+			\cf2 // object representing an HTTP Response (like most servers do), and then send\cf0 \
+			\cf2 // it in string form at the end, but I don't want to entirely rewrite this codebase.\cf0 \
+			return \cf6 false\cf0 ;\
+		\}\
+\
+		\cf2 // decode(<authentication-cookie>) = username + ":" + password\cf0 \
+		String authenticationCookie = new \cf5 String\cf0 (authenticationCookieBytes);\
+		int colonLocation = authenticationCookie.\cf5 indexOf\cf0 (\cf4 ":"\cf0 );\
+\
+		if(colonLocation == -\cf3 1\cf0 ) \{\
+			\cf5 logError\cf0 (\cf4 "Invalid authentication cookie: expected colon."\cf0 );\
+			\cf2 // see above: it'd be nice to have an object-level response instance to mutate\cf0 \
+			\cf2 // before it's serialized, but we're just printing. Otherwise I'd send Bad Request.\cf0 \
+			return \cf6 false\cf0 ;\
+		\}\
+\
+		String givenUsername = authenticationCookie.\cf5 substring\cf0 (\cf3 0\cf0 , colonLocation);\
+		String givenPassword = authenticationCookie.\cf5 substring\cf0 (\
+			colonLocation + \cf3 1\cf0 , \
+			authenticationCookie.\cf5 length\cf0 ()\
+		);\
+\
+		\cf2 // it'd be nice to use a constant-time comparison function here to avoid timing\cf0 \
+		\cf2 // attacks, but since we're using HTTP Basic Authentication unencrypted with hardcoded\cf0 \
+		\cf2 // credentials in the source code, we're far beyond the need for that.\cf0 \
+		\cf2 //\cf0 \
+		\cf2 // also, we'd normally look up a user record here, but there's exactly one hardcoded\cf0 \
+		\cf2 // user, so I simplify it to one line.\cf0 \
+		return givenUsername.\cf5 equals\cf0 (USERNAME) && givenPassword.\cf5 equals\cf0 (PASSWORD);\
+	\}\
+\
+	public void \cf5 statusCode\cf0 (OutputStreamWriter clientConnection, int code) throws Exception \{\
+		Map<Integer, String> codes = Map.\cf5 of\cf0 (\
+			\cf3 200\cf0 , \cf4 "OK"\cf0 ,\
+			\cf3 401\cf0 , \cf4 "Unauthorized"\cf0 ,\
+			\cf3 403\cf0 , \cf4 "Forbidden"\cf0 ,\
+			\cf3 400\cf0 , \cf4 "Bad Request"\cf0 ,\
+			\cf3 404\cf0 , \cf4 "Not Found"\cf0 ,\
+			\cf3 501\cf0 , \cf4 "Not Implemented"\cf0 \
+		);\
+		String message = codes.\cf5 get\cf0 (code);\
+\
+		try \{\
+			clientConnection.\cf5 write\cf0 (\cf4 "HTTP/1.0 "\cf0  + code + \cf4 " "\cf0  + message + \cf4 "\cf7 \\n\cf4 "\cf0 );\
+		\} catch(IOException e) \{\
+			System.out.\cf5 println\cf0 (\cf4 "Could not write to client: "\cf0  + e.\cf5 getMessage\cf0 ());\
+		\}\
+	\}\
+\
+	public void \cf5 writeHeader\cf0 (OutputStreamWriter clientConnection, String headerName, String headerField) \{\
+		try \{\
+			clientConnection.\cf5 write\cf0 (headerName + \cf4 ": "\cf0  + headerField + \cf4 "\cf7 \\n\cf4 "\cf0 );\
+		\} catch(IOException e) \{\
+			System.out.\cf5 println\cf0 (\cf4 "Could not write to client: "\cf0  + e.\cf5 getMessage\cf0 ());\
+		\}\
+	\}\
+\
+	public void \cf5 endHeaders\cf0 (OutputStreamWriter clientConnection) \{\
+		try \{\
+			clientConnection.\cf5 write\cf0 (\cf4 "\cf7 \\n\cf4 "\cf0 );\
+		\} catch(IOException e) \{\
+			System.out.\cf5 println\cf0 (\cf4 "Could not write to client: "\cf0  + e.\cf5 getMessage\cf0 ());\
+		\}\
+	\}\
+\
+	public void \cf5 serveFile\cf0 (\
+		OutputStreamWriter clientConnection, \
+		String pathName\
+	) throws Exception \{\
+		FileReader fileReader = \cf6 null\cf0 ;\
+		int endOfFile = -\cf3 1\cf0 ;\
+		int character = endOfFile;\
+		StringBuffer buffer = new \cf5 StringBuffer\cf0 ();\
+\
+		\cf2 // remove the initial slash at the beginning\cf0 \
+		\cf2 // of the pathname in the request \cf0 \
+		if(pathName.\cf5 charAt\cf0 (\cf3 0\cf0 ) == \cf4 '/'\cf0 ) \{\
+			pathName = pathName.\cf5 substring\cf0 (\cf3 1\cf0 );\
+		\}\
+\
+		\cf2 // if there was no filename specified by the\cf0 \
+		\cf2 // client, serve the "index.html" file \cf0 \
+		if(pathName.\cf5 equals\cf0 (\cf4 ""\cf0 )) \{\
+			pathName = \cf4 "index.html"\cf0 ;\
+		\}\
+\
+		\cf2 // try to open file specified by pathname \cf0 \
+		try \{\
+			fileReader = new \cf5 FileReader\cf0 (pathName);\
+			character = fileReader.\cf5 read\cf0 ();\
+		\} catch(Exception e) \{\
+			\cf5 statusCode\cf0 (clientConnection, \cf3 404\cf0 ); \cf2 // Not Found\cf0 \
+			\cf5 endHeaders\cf0 (clientConnection);\
+			return;\
+		\}\
+\
+		\cf2 // if the requested file can be successfully opened\cf0 \
+		\cf2 // and read, then return an OK response code and\cf0 \
+		\cf2 // send the contents of the file \cf0 \
+		\
+\
+		while(character != endOfFile) \{\
+			buffer.\cf5 append\cf0 ((char) character);\
+			character = fileReader.\cf5 read\cf0 ();\
+\
+			if(buffer.\cf5 length\cf0 () > MAX_FILE_SIZE) \{\
+				\cf5 statusCode\cf0 (clientConnection, \cf3 403\cf0 ); \cf2 // Forbidden\cf0 \
+				\cf5 endHeaders\cf0 (clientConnection);\
+				\cf5 logError\cf0 (\cf4 "Attempted access to file larger than MAX_FILE_SIZE ("\cf0  + pathName + \cf4 ")"\cf0 );\
+				return;\
+			\}\
+		\}\
+\
+		\cf5 statusCode\cf0 (clientConnection, \cf3 200\cf0 ); \cf2 // OK\cf0 \
+		\cf5 endHeaders\cf0 (clientConnection);\
+		\cf2 // response body\cf0 \
+		clientConnection.\cf5 write\cf0 (buffer.\cf5 toString\cf0 ());\
+	\}\
+\
+	public void \cf5 logError\cf0 (String message) \{\
+		\cf2 // ISO 8601 timestamp\cf0 \
+		String timestamp = DateTimeFormatter\
+			.\cf5 ofPattern\cf0 (\cf4 "yyyy-MM-dd'T'HH:mmX"\cf0 )\
+			.\cf5 withZone\cf0 (ZoneOffset.UTC)\
+			.\cf5 format\cf0 (Instant.\cf5 now\cf0 ());\
+\
+		String logMessage = \cf4 "[Error] "\cf0  + timestamp + \cf4 " - "\cf0  + message;\
+		System.out.\cf5 print\cf0 (logMessage);\
+\
+		try(Writer writer = new \cf5 BufferedWriter\cf0 (new \cf5 FileWriter\cf0 (\cf4 "error_log"\cf0 ))) \{\
+			writer.\cf5 write\cf0 (logMessage + \cf4 "\cf7 \\n\cf4 "\cf0 );\
+		\} catch(IOException e) \{\
+			System.out.\cf5 println\cf0 (\cf4 "logError could not write to `error_log`: "\cf0  + e.\cf5 getMessage\cf0 ());\
+		\}\
+	\}\
+\
+	public static void \cf5 main\cf0 (String argv[]) throws Exception \{\
+		System.out.\cf5 println\cf0 (\cf4 "Starting web server..."\cf0 );\
+		\
+		SimpleWebServer server = new \cf5 SimpleWebServer\cf0 ();\
+		server.\cf5 run\cf0 ();\
+	\}\
+\}\
+}
